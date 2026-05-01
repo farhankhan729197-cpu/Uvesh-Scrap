@@ -1,158 +1,243 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Navbar } from '@/components/Navbar';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { InquiryCard } from '@/components/InquiryDisplay';
-import { Loader2, ShieldAlert, TrendingUp, PackageCheck, ClipboardList, Clock } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
 import Link from 'next/link';
+import { db } from '@/lib/firebase';
+import { collection, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { 
+  BarChart3, 
+  Package, 
+  Search, 
+  Filter, 
+  MoreHorizontal, 
+  Eye, 
+  CheckCircle, 
+  XCircle, 
+  Truck,
+  MapPin,
+  Phone,
+  Mail,
+  Calendar
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
-export default function AdminPage() {
-  const { user, profile, isAdmin, loading: authLoading } = useAuth();
+export default function AdminDashboard() {
+  const { user, isAdmin, loading: authLoading } = useAuth();
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedInquiry, setSelectedInquiry] = useState<any>(null);
 
   useEffect(() => {
     if (!isAdmin) return;
 
-    const timer = setTimeout(() => setLoading(true), 0);
-    const q = query(
-      collection(db, 'inquiries'),
-      orderBy('createdAt', 'desc')
-    );
-
+    const q = query(collection(db, 'inquiries'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setInquiries(data);
-      setLoading(false);
-    }, (err) => {
-      console.error("Error fetching all inquiries:", err);
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setInquiries(docs);
       setLoading(false);
     });
 
-    return () => {
-      unsubscribe();
-      clearTimeout(timer);
-    };
+    return () => unsubscribe();
   }, [isAdmin]);
 
-  const updateStatus = async (id: string, newStatus: string) => {
+  const updateStatus = async (inquiryId: string, status: string) => {
     try {
-      const docRef = doc(db, 'inquiries', id);
-      await updateDoc(docRef, {
-        status: newStatus,
+      await updateDoc(doc(db, 'inquiries', inquiryId), {
+        status,
         updatedAt: serverTimestamp()
       });
-    } catch (err) {
-      console.error("Error updating status:", err);
-      alert("Failed to update status. Check console for details.");
+      if (selectedInquiry?.id === inquiryId) {
+        setSelectedInquiry({ ...selectedInquiry, status });
+      }
+    } catch (error) {
+      alert("Failed to update status");
     }
   };
 
-  if (authLoading || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen">
-        <Navbar />
-        <div className="max-w-7xl mx-auto px-4 pt-32 text-center">
-          <div className="bg-white p-12 rounded-3xl shadow-xl border border-slate-100 max-w-md mx-auto">
-            <ShieldAlert className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-slate-800 mb-2">Access Denied</h1>
-            <p className="text-slate-500 mb-8">This area is reserved for the owner (UVESH SCRAP Admin).</p>
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/">Back to Home</Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Stats
-  const stats = {
-    total: inquiries.length,
-    pending: inquiries.filter(i => i.status === 'pending').length,
-    done: inquiries.filter(i => i.status === 'done').length,
-  };
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center font-display font-bold">Checking Admin Privileges...</div>;
+  if (!isAdmin) return (
+    <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
+      <h1 className="text-4xl font-display font-black text-gray-900">Access Denied</h1>
+      <p className="text-gray-500">Only authorized team members can access this panel.</p>
+      <Link href="/" className="bg-orange-600 text-white px-8 py-3 rounded-xl font-bold">Return Home</Link>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 relative overflow-hidden font-sans">
-      <Navbar />
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <Header />
       
-      {/* Background Blobs */}
-      <div className="fixed inset-0 z-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[20%] w-[50%] h-[50%] bg-emerald-100/30 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-emerald-50 rounded-full blur-[100px]" />
-      </div>
+      <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full overflow-hidden flex flex-col">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-display font-black text-gray-900 tracking-tight">Admin Console</h1>
+            <p className="text-gray-500 text-sm font-medium uppercase tracking-widest flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-orange-600" /> Management Dashboard
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+             <div className="bg-white px-4 py-2 rounded-xl border border-gray-200">
+               <p className="text-[10px] text-gray-400 font-black uppercase">Pending</p>
+               <p className="text-xl font-display font-black text-orange-600">{inquiries.filter(i => i.status === 'Pending').length}</p>
+             </div>
+             <div className="bg-white px-4 py-2 rounded-xl border border-gray-200">
+               <p className="text-[10px] text-gray-400 font-black uppercase">Completed</p>
+               <p className="text-xl font-display font-black text-green-600">{inquiries.filter(i => i.status === 'Done').length}</p>
+             </div>
+          </div>
+        </div>
 
-      <main className="max-w-7xl mx-auto px-4 pt-32 pb-20 relative z-10">
-        <header className="mb-16">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8 mb-12">
-            <div>
-              <h1 className="text-6xl font-black text-slate-800 tracking-tight leading-none mb-3">ADMIN DESK</h1>
-              <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Live Monitoring Hub</p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 overflow-hidden h-full">
+          {/* List Section */}
+          <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2">
+            <div className="bg-white p-4 rounded-2xl border border-gray-200 flex items-center gap-4 sticky top-0 z-10 shadow-sm">
+              <Search className="h-5 w-5 text-gray-300" />
+              <input type="text" placeholder="Search customer, brand, or location..." className="flex-grow outline-none text-sm font-medium" />
+              <Filter className="h-5 w-5 text-gray-300 cursor-pointer" />
+            </div>
+
+            {loading ? (
+              <div className="py-20 text-center animate-pulse text-gray-400 font-bold uppercase tracking-widest">Loading inquiries...</div>
+            ) : (
+              <div className="space-y-3">
+                {inquiries.map((inquiry) => (
+                  <div 
+                    key={inquiry.id}
+                    onClick={() => setSelectedInquiry(inquiry)}
+                    className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer group ${
+                      selectedInquiry?.id === inquiry.id ? 'border-orange-600 shadow-md ring-1 ring-orange-600' : 'border-gray-200 hover:border-orange-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-3 flex-grow">
+                        <div className="flex items-center gap-2">
+                          <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] font-black uppercase">{inquiry.applianceType}</span>
+                          <StatusBadge status={inquiry.status} />
+                        </div>
+                        <div>
+                          <h4 className="font-display font-bold text-gray-900 text-lg">{inquiry.brand} {inquiry.model}</h4>
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                            <MapPin className="h-3 w-3" />
+                            <span className="truncate max-w-[200px]">{inquiry.address}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-xs font-bold text-gray-900">{inquiry.customerName}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {inquiry.createdAt?.toDate ? new Date(inquiry.createdAt.toDate()).toLocaleDateString() : 'Just now'}
+                        </p>
+                        <MoreHorizontal className="h-5 w-5 text-gray-200 mt-2 ml-auto group-hover:text-gray-400 transition-colors" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div className="px-6 py-3 bg-white/40 backdrop-blur-md rounded-2xl border border-white text-[11px] font-black uppercase tracking-widest text-slate-500 shadow-sm">
-              Logged as: {user?.email}
-            </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {[
-              { label: "Total Received", val: stats.total, color: "bg-blue-500" },
-              { label: "Awaiting Action", val: stats.pending, color: "bg-amber-500" },
-              { label: "Done & Verified", val: stats.done, color: "bg-emerald-500" }
-            ].map((stat, i) => (
-              <div key={i} className="bg-white/40 backdrop-blur-xl border border-white rounded-[32px] p-8 shadow-xl hover:shadow-2xl transition-all">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className={cn("w-2 h-2 rounded-full", stat.color)} />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{stat.label}</span>
+          {/* Action Panel */}
+          <div className="lg:col-span-1">
+            <AnimatePresence mode="wait">
+              {selectedInquiry ? (
+                <motion.div 
+                  key="panel"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="bg-white rounded-[2.5rem] border border-gray-200 shadow-xl overflow-hidden flex flex-col h-fit sticky top-20"
+                >
+                  <div className="bg-gray-900 p-8 text-white space-y-6">
+                    <div className="flex justify-between items-start">
+                      <div className="bg-orange-600 p-3 rounded-2xl shadow-lg shadow-orange-900/50">
+                        <Package className="h-8 w-8" />
+                      </div>
+                      <button onClick={() => setSelectedInquiry(null)} className="text-gray-500 hover:text-white">✕</button>
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-display font-black leading-tight tracking-tight">{selectedInquiry.brand}</h2>
+                      <p className="text-gray-400 font-medium">{selectedInquiry.model}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-8 space-y-8">
+                    <div className="space-y-4">
+                      <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">Customer Info</h5>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3 text-sm">
+                          <Mail className="h-4 w-4 text-gray-400" />
+                          <span className="text-gray-600 font-medium">{selectedInquiry.customerEmail}</span>
+                        </div>
+                        <div className="flex items-start gap-3 text-sm">
+                          <MapPin className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                          <span className="text-gray-600 leading-relaxed">{selectedInquiry.address}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm font-bold text-gray-900">
+                          <Calendar className="h-4 w-4 text-orange-600" />
+                          <span>Pickup: {selectedInquiry.pickupDate}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                       {['Pending', 'Picked Up', 'Done', 'Rejected'].map(s => (
+                         <button 
+                           key={s}
+                           onClick={() => updateStatus(selectedInquiry.id, s)}
+                           className={`flex-1 py-3 px-1 rounded-xl text-[10px] font-black uppercase transition-all border-2 ${
+                             selectedInquiry.status === s 
+                             ? 'bg-gray-900 border-gray-900 text-white' 
+                             : 'border-gray-100 text-gray-400 hover:border-gray-200'
+                           }`}
+                         >
+                           {s.replace('Picked Up', 'Pickup')}
+                         </button>
+                       ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-6 border-t border-gray-100">
+                      <button className="flex items-center justify-center gap-2 bg-green-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-green-100 hover:bg-green-700 transition-all">
+                        <CheckCircle className="h-4 w-4" /> Mark Done
+                      </button>
+                      <button className="flex items-center justify-center gap-2 bg-gray-100 text-gray-400 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-50 hover:text-red-600 transition-all">
+                        <XCircle className="h-4 w-4" /> Reject
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="bg-gray-100 rounded-[2.5rem] border-2 border-dashed border-gray-200 h-[500px] flex flex-col items-center justify-center text-center p-8 space-y-4">
+                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
+                    <Eye className="h-10 w-10 text-gray-300" />
+                  </div>
+                  <h3 className="font-display font-bold text-gray-900">Inquiry Preview</h3>
+                  <p className="text-xs text-gray-400 max-w-[200px]">Select any inquiry from the list to view full details and update status.</p>
                 </div>
-                <div className="text-5xl font-black text-slate-800 tracking-tighter leading-none">{stat.val}</div>
-              </div>
-            ))}
+              )}
+            </AnimatePresence>
           </div>
-        </header>
-
-        <section className="space-y-10">
-          <div className="flex items-end justify-between border-b-2 border-slate-200 pb-6">
-            <div>
-              <h2 className="text-3xl font-black text-slate-800 tracking-tight leading-none mb-2 lowercase">inquiry database</h2>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Real-time update stream</p>
-            </div>
-          </div>
-
-          {inquiries.length === 0 ? (
-            <div className="bg-white/40 backdrop-blur-xl border border-white p-20 rounded-[48px] text-center shadow-lg">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">System Clear: No Inquiries</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {inquiries.map((inquiry) => (
-                <InquiryCard 
-                  key={inquiry.id} 
-                  inquiry={inquiry} 
-                  isAdmin={true} 
-                  onUpdateStatus={updateStatus} 
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        </div>
       </main>
+      
+      <Footer />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles: any = {
+    'Pending': 'bg-yellow-50 text-yellow-600',
+    'Picked Up': 'bg-blue-50 text-blue-600',
+    'Done': 'bg-green-50 text-green-600',
+    'Rejected': 'bg-red-50 text-red-600',
+  };
+  return (
+    <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-tighter ${styles[status]}`}>
+      {status}
     </div>
   );
 }

@@ -1,53 +1,58 @@
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "User profile data",
-      "type": "object",
-      "properties": {
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "photoURL": { "type": "string" },
-        "role": { "type": "string", "enum": ["customer", "admin"] },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["email", "role"]
-    },
     "Inquiry": {
       "title": "Inquiry",
-      "description": "A customer's inquiry for appliance scrap",
+      "description": "A customer inquiry for selling an appliance.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
         "applianceType": { "type": "string" },
         "brand": { "type": "string" },
         "model": { "type": "string" },
         "condition": { "type": "string" },
         "photos": { "type": "array", "items": { "type": "string" } },
-        "address": { "type": "string" },
         "location": {
           "type": "object",
           "properties": {
+            "address": { "type": "string" },
             "lat": { "type": "number" },
             "lng": { "type": "number" }
-          }
+          },
+          "required": ["address", "lat", "lng"]
         },
         "pickupDate": { "type": "string", "format": "date" },
-        "status": { "type": "string", "enum": ["pending", "picked_up", "done", "rejected"] },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Picked Up", "Done", "Rejected"]
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "applianceType", "brand", "address", "pickupDate", "status"]
+      "required": ["customerId", "applianceType", "brand", "location", "pickupDate", "status"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stored user information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "isAdmin": { "type": "boolean" }
+      },
+      "required": ["uid", "email"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "User",
-      "description": "User profile documents"
-    },
     "/inquiries/{inquiryId}": {
       "schema": "Inquiry",
-      "description": "Product inquiries submitted by customers"
+      "description": "Collection of all appliance sell inquiries."
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
     }
   }
 }

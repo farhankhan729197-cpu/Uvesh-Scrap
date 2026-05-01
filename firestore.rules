@@ -1,26 +1,32 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // 1. Primitive Helpers
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isEmailVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'farhankhan729197@gmail.com';
+      // In a real app, we'd check a dedicated 'admins' collection or a custom claim
+      // For this applet, the user Farhan (as per metadata) will be considered the admin
+      // In the absence of a roles collection, we rely on the custom field we set on the user doc
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -31,63 +37,54 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    // 2. Validation Helpers
+    function isValidInquiry(data) {
+      return data.keys().hasAll(['customerId', 'applianceType', 'brand', 'location', 'pickupDate', 'status']) &&
+             data.customerId is string &&
+             data.applianceType is string &&
+             data.brand is string &&
+             data.pickupDate is string &&
+             data.status in ['Pending', 'Picked Up', 'Done', 'Rejected'] &&
+             data.location is map &&
+             data.location.address is string;
     }
 
-    // --- Users Collection ---
-    function isValidUser(data) {
-      return data.email is string && data.email.size() <= 200 &&
-             data.role in ['customer', 'admin'] &&
-             (data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
-             (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000));
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid == request.auth.uid &&
+             data.email is string;
     }
 
+    // 3. Collection Rules
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
-      allow list: if isAdmin();
-      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().role == 'customer';
-      allow update: if (isOwner(userId) && isValidUser(incoming()) && incoming().role == existing().role && incoming().email == existing().email) || isAdmin();
-    }
-
-    // --- Inquiries Collection ---
-    function isValidInquiry(data) {
-      return data.userId is string && data.userId.size() <= 128 &&
-             data.applianceType is string && data.applianceType.size() <= 100 &&
-             data.brand is string && data.brand.size() <= 100 &&
-             data.condition is string && data.condition.size() <= 500 &&
-             data.address is string && data.address.size() <= 1000 &&
-             data.pickupDate is string && data.pickupDate.size() <= 50 &&
-             data.status in ['pending', 'picked_up', 'done', 'rejected'] &&
-             (data.model == null || (data.model is string && data.model.size() <= 100)) &&
-             (data.photos == null || (data.photos is list && data.photos.size() <= 10)) &&
-             (data.location == null || (data.location is map && data.location.lat is number && data.location.lng is number));
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phoneNumber']) && 
+                      isValidUserProfile(incoming());
+      // Admin can update any user to make them admin etc (if needed)
+      allow update: if isAdmin();
     }
 
     match /inquiries/{inquiryId} {
-      allow get: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // Customers can read their own inquiries
+      allow list: if isSignedIn() && resource.data.customerId == request.auth.uid;
+      allow get: if isOwner(resource.data.customerId) || isAdmin();
       
+      // Anyone signed in can create an inquiry
       allow create: if isSignedIn() && 
-                    isValidInquiry(incoming()) && 
-                    incoming().userId == request.auth.uid && 
-                    incoming().status == 'pending' &&
-                    incoming().createdAt == request.time;
+                      isValidInquiry(incoming()) && 
+                      incoming().customerId == request.auth.uid &&
+                      incoming().status == 'Pending'; // Must start as Pending
       
-      allow update: if isSignedIn() && (
-        // Admin can update everything
-        isAdmin() ||
-        // Customer can only update if it's their inquiry and it's pending
-        (isOwner(existing().userId) && existing().status == 'pending' && 
-         isValidInquiry(incoming()) && 
-         incoming().userId == existing().userId &&
-         incoming().createdAt == existing().createdAt &&
-         incoming().status == existing().status && // Users can't change status themselves
-         incoming().updatedAt == request.time
-        )
-      );
+      // Admin can update anything about the inquiry (e.g. status)
+      allow update: if isAdmin() && isValidInquiry(incoming());
       
-      allow delete: if isAdmin();
+      // Owners can update their own inquiries but ONLY if they are still Pending
+      allow update: if isOwner(existing().customerId) && 
+                      existing().status == 'Pending' &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['model', 'address', 'pickupDate']) &&
+                      isValidInquiry(incoming());
     }
   }
 }

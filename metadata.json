@@ -1,8 +1,6 @@
 {
-  "name": "UVESH SCRAP - Old Appliance Scrap Buyer",
-  "description": "Sell your old appliances (ACs, fridges, batteries, washing machines) for scrap. Best prices and free pickup in Delhi NCR (Delhi, Ghaziabad, Noida, Greater Noida).",
-  "requestFramePermissions": [
-    "geolocation"
-  ],
+  "name": "Uvesh Scrap",
+  "description": "A platform for selling old appliances like ACs, fridges, and washing machines in Delhi NCR. Quick pickup and secure payments.",
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": []
 }

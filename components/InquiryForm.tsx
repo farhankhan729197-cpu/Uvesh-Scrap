@@ -1,281 +1,367 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
-import { APPLIANCE_TYPES, SERVICE_AREAS } from '@/lib/constants';
-import { db, auth, handleFirestoreError, OperationType } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { Camera, MapPin, Calendar, CheckCircle2, AlertCircle, Loader2, Upload } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { useState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
-import { signInWithGoogle } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Camera, 
+  MapPin, 
+  Calendar, 
+  ChevronRight, 
+  ChevronLeft, 
+  CheckCircle2,
+  Trash2,
+  AlertTriangle
+} from 'lucide-react';
 
-const formSchema = z.object({
-  applianceType: z.string().min(1, 'Please select an appliance type'),
-  brand: z.string().min(1, 'Please select a brand'),
-  model: z.string().optional(),
-  condition: z.string().min(10, 'Please provide more details about the condition'),
-  address: z.string().min(10, 'Please provide a full address for pickup'),
-  pickupDate: z.string().min(1, 'Please select a convenient pickup date'),
-  location: z.object({
-    lat: z.number().optional(),
-    lng: z.number().optional()
-  }).optional()
-});
+const APPLIANCE_TYPES = [
+  { id: 'ac', label: 'Air Conditioner', icon: '❄️' },
+  { id: 'fridge', label: 'Refrigerator', icon: '🧊' },
+  { id: 'battery', label: 'Inverter/Battery', icon: '🔋' },
+  { id: 'washing_machine', label: 'Washing Machine', icon: '🧺' },
+  { id: 'tv', label: 'Television', icon: '📺' },
+  { id: 'laptop', label: 'Laptop/PCs', icon: '💻' },
+  { id: 'other', label: 'Other Scrap', icon: '♻️' },
+];
 
-type FormValues = z.infer<typeof formSchema>;
+const BRANDS: Record<string, string[]> = {
+  ac: ['LG', 'Samsung', 'Daikin', 'Voltas', 'Blue Star', 'Lloyd', 'Other'],
+  fridge: ['LG', 'Samsung', 'Whirlpool', 'Godrej', 'Haier', 'Other'],
+  washing_machine: ['IFB', 'LG', 'Samsung', 'Whirlpool', 'Bosch', 'Other'],
+  battery: ['Exide', 'Luminous', 'Microtek', 'Amara Raja', 'Other'],
+  tv: ['Sony', 'Samsung', 'LG', 'Mi', 'OnePlus', 'Other'],
+  laptop: ['HP', 'Dell', 'Lenovo', 'Apple', 'Asus', 'Acer', 'Other'],
+  other: ['Various'],
+};
 
-export const InquiryForm = () => {
-  const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
+export function InquiryForm() {
+  const { user, signInWithGoogle } = useAuth();
+  const [step, setStep] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
-  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
 
-  const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      applianceType: 'ac',
-      status: 'pending'
-    } as any
+  const [formData, setFormData] = useState({
+    applianceType: '',
+    brand: '',
+    model: '',
+    condition: 'Working',
+    address: '',
+    pickupDate: '',
+    photos: [] as string[],
   });
 
-  const selectedType = watch('applianceType');
-  const typeData = APPLIANCE_TYPES.find(t => t.value === selectedType);
+  const nextStep = () => setStep((s) => s + 1);
+  const prevStep = () => setStep((s) => s - 1);
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files) {
-      const newPhotos: string[] = [];
-      Array.from(files).forEach(file => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          newPhotos.push(reader.result as string);
-          if (newPhotos.length === Array.from(files).length) {
-            setSelectedPhotos(prev => [...prev, ...newPhotos].slice(0, 5));
-          }
-        };
-        reader.readAsDataURL(file);
-      });
-    }
-  };
-
-  const getGeoLocation = () => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        const pos = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        };
-        setCurrentLocation(pos);
-        setValue('location', pos);
-      }, (err) => {
-        console.error("Error getting location:", err);
-        setError("Could not get precise location. Please ensure location permissions are enabled.");
-      });
-    } else {
-      setError("Geolocation is not supported by your browser.");
-    }
-  };
-
-  const onSubmit = async (values: FormValues) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!user) {
-      setError("Please login to submit an inquiry.");
+      signInWithGoogle();
       return;
     }
 
-    setLoading(true);
+    setIsSubmitting(true);
     setError(null);
 
-    const inquiryData = {
-      ...values,
-      userId: user.uid,
-      userName: user.displayName || user.email,
-      userEmail: user.email,
-      photos: selectedPhotos,
-      status: 'pending',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
     try {
-      await addDoc(collection(db, 'inquiries'), inquiryData);
-      setSuccess(true);
-      reset();
-      setSelectedPhotos([]);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'inquiries');
-      setError("Failed to submit inquiry. Please try again.");
+      // Validate location area (basic string check for demo)
+      const validAreas = ['delhi', 'noida', 'ghaziabad', 'greater noida', 'vaishali', 'vasundhara', 'kaushambi'];
+      const locationLower = formData.address.toLowerCase();
+      const isWithinServiceArea = validAreas.some(area => locationLower.includes(area));
+
+      if (!isWithinServiceArea) {
+        throw new Error("Sorry, we currently only serve Delhi, Noida, Ghaziabad, and Greater Noida.");
+      }
+
+      await addDoc(collection(db, 'inquiries'), {
+        ...formData,
+        customerId: user.uid,
+        customerEmail: user.email,
+        customerName: user.displayName,
+        status: 'Pending',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setSubmitted(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to submit inquiry. Please try again.");
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  if (success) {
+  if (submitted) {
     return (
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white p-8 rounded-2xl shadow-xl text-center border border-emerald-100"
-      >
-        <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
-          <CheckCircle2 className="w-8 h-8" />
+      <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 text-center space-y-6">
+        <div className="flex justify-center">
+          <div className="bg-green-100 p-4 rounded-full">
+            <CheckCircle2 className="h-12 w-12 text-green-600" />
+          </div>
         </div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">Inquiry Submitted!</h2>
-        <p className="text-slate-600 mb-6">
-          Thank you for choosing UVESH SCRAP. Our representative will contact you shortly to confirm the pickup and price.
+        <h3 className="text-2xl font-display font-bold text-gray-900">Inquiry Submitted!</h3>
+        <p className="text-gray-500">
+          Our team will review your appliance details and contact you shortly for pickup.
         </p>
-        <Button onClick={() => setSuccess(false)} variant="outline" className="w-full">
-          Submit Another Inquiry
-        </Button>
-      </motion.div>
+        <button 
+          onClick={() => { setSubmitted(false); setStep(1); setFormData({
+            applianceType: '', brand: '', model: '', condition: 'Working', address: '', pickupDate: '', photos: []
+          }); }}
+          className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 transition-all"
+        >
+          Submit Another
+        </button>
+      </div>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full bg-white/70 backdrop-blur-xl rounded-[32px] border border-white shadow-2xl p-8 relative overflow-hidden">
-      <div className="mb-8 text-center sm:text-left">
-        <h3 className="text-3xl font-black text-slate-800 tracking-tight leading-none mb-2">Sell Your Appliance</h3>
-        <p className="text-sm text-slate-500 font-medium tracking-tight">Fill details to get an instant quote and book pickup.</p>
+    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-2xl border border-gray-100 relative overflow-hidden">
+      {/* Progress Bar */}
+      <div className="absolute top-0 left-0 w-full h-1.5 bg-gray-100">
+        <motion.div 
+          className="h-full bg-orange-600"
+          initial={{ width: '0%' }}
+          animate={{ width: `${(step / 3) * 100}%` }}
+        />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-        {/* Appliance Type */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Appliance Type</label>
-          <select 
-            {...register('applianceType')}
-            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all appearance-none cursor-pointer"
-          >
-            {APPLIANCE_TYPES.map(type => (
-              <option key={type.value} value={type.value}>{type.label}</option>
-            ))}
-          </select>
-          {errors.applianceType && <p className="text-[10px] text-red-500 font-bold px-1">{errors.applianceType.message}</p>}
-        </div>
-
-        {/* Brand */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Brand</label>
-          <select 
-            {...register('brand')}
-            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all appearance-none cursor-pointer"
-          >
-            <option value="">Select Brand</option>
-            {typeData?.brands.map(brand => (
-              <option key={brand} value={brand}>{brand}</option>
-            ))}
-            <option value="other">Other</option>
-          </select>
-          {errors.brand && <p className="text-[10px] text-red-500 font-bold px-1">{errors.brand.message}</p>}
-        </div>
-
-        {/* Condition */}
-        <div className="space-y-1 sm:col-span-2">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Description & Condition</label>
-          <textarea 
-            {...register('condition')}
-            placeholder="e.g. Working condition, compressor missing..."
-            className="w-full min-h-[80px] bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all resize-none"
-          />
-          {errors.condition && <p className="text-[10px] text-red-500 font-bold px-1">{errors.condition.message}</p>}
-        </div>
-
-        {/* Address */}
-        <div className="space-y-1 sm:col-span-2">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Pickup Address (NCR Only)</label>
-          <div className="relative">
-            <input 
-              {...register('address')}
-              placeholder="Detailed house address & Landmark..."
-              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all pl-4 pr-10"
-            />
-            <button 
-              type="button" 
-              onClick={getGeoLocation}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-              title="Get current location"
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <AnimatePresence mode="wait">
+          {step === 1 && (
+            <motion.div
+              key="step1"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4"
             >
-              <MapPin className={cn("w-4 h-4", currentLocation && "fill-emerald-600")} />
-            </button>
-          </div>
-          {errors.address && <p className="text-[10px] text-red-500 font-bold px-1">{errors.address.message}</p>}
-        </div>
+              <div className="space-y-1">
+                <h3 className="text-xl font-display font-bold text-gray-900">What are you selling?</h3>
+                <p className="text-sm text-gray-500">Select your appliance type and brand</p>
+              </div>
 
-        <div className="grid grid-cols-2 gap-4 sm:col-span-2">
-          {/* Date */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Preferred Date</label>
-            <input 
-              type="date"
-              {...register('pickupDate')}
-              min={new Date().toISOString().split('T')[0]}
-              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all"
-            />
-          </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {APPLIANCE_TYPES.map((type) => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => setFormData({ ...formData, applianceType: type.id })}
+                    className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 ${
+                      formData.applianceType === type.id 
+                      ? 'border-orange-600 bg-orange-50 text-orange-600' 
+                      : 'border-gray-100 hover:border-orange-200 text-gray-600'
+                    }`}
+                  >
+                    <span className="text-2xl">{type.icon}</span>
+                    <span className="text-xs font-bold leading-tight">{type.label}</span>
+                  </button>
+                ))}
+              </div>
 
-          {/* Photos */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Photos</label>
-            <label className="w-full h-[46px] bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl py-2 text-[11px] font-bold text-slate-500 flex items-center justify-center gap-2 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-all">
-              <Camera className="w-4 h-4" />
-              Upload
-              <input type="file" accept="image/*" multiple onChange={handlePhotoChange} className="hidden" />
-            </label>
-          </div>
-        </div>
-      </div>
+              {formData.applianceType && (
+                <div className="space-y-4 pt-4 animate-in fade-in slide-in-from-top-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-gray-700">Brand</label>
+                    <select 
+                      className="w-full p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-orange-600 outline-none"
+                      value={formData.brand}
+                      onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                      required
+                    >
+                      <option value="">Select Brand</option>
+                      {BRANDS[formData.applianceType]?.map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-gray-700">Model / Description</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. 1.5 Ton Split AC, 5 Star"
+                      className="w-full p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-orange-600 outline-none"
+                      value={formData.model}
+                      onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+              )}
 
-      {selectedPhotos.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-4 pt-2">
-          {selectedPhotos.map((photo, i) => (
-            <div key={i} className="relative w-12 h-12 rounded-lg overflow-hidden border border-slate-200 shrink-0">
-              <img src={photo} alt={`Preview ${i}`} className="w-full h-full object-cover" />
               <button 
-                type="button" 
-                onClick={() => setSelectedPhotos(prev => prev.filter((_, idx) => idx !== i))}
-                className="absolute inset-0 bg-red-500/80 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[8px] font-bold"
+                type="button"
+                disabled={!formData.applianceType || !formData.brand || !formData.model}
+                onClick={nextStep}
+                className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 disabled:opacity-50 transition-all group"
               >
-                DEL
+                Next Step <ChevronRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
               </button>
-            </div>
-          ))}
-        </div>
-      )}
+            </motion.div>
+          )}
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2 text-red-700 text-[11px] font-medium">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <p>{error}</p>
-        </div>
-      )}
+          {step === 2 && (
+            <motion.div
+              key="step2"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="space-y-1">
+                <h3 className="text-xl font-display font-bold text-gray-900">Photos & Condition</h3>
+                <p className="text-sm text-gray-500">The better the photos, the more accurate our quote</p>
+              </div>
 
-      {user ? (
-        <button 
-          type="submit" 
-          disabled={loading} 
-          className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xl mt-2 shadow-xl shadow-slate-200 active:scale-[0.98] transition-all disabled:opacity-70 disabled:pointer-events-none hover:bg-slate-800 tracking-tight"
-        >
-          {loading ? "SUBMITTING..." : "SUBMIT INQUIRY"}
-        </button>
-      ) : (
-        <button 
-          type="button" 
-          onClick={() => signInWithGoogle()} 
-          className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xl mt-2 shadow-xl shadow-slate-200 active:scale-[0.98] transition-all hover:bg-slate-800 tracking-tight"
-        >
-          LOGIN TO SUBMIT
-        </button>
-      )}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700 uppercase tracking-wider">Condition</label>
+                <div className="flex gap-2">
+                  {['Working', 'Not Working', 'Damaged/Broken'].map((cond) => (
+                    <button
+                      key={cond}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, condition: cond })}
+                      className={`flex-1 py-2 text-xs font-bold rounded-lg border-2 transition-all ${
+                        formData.condition === cond 
+                        ? 'border-gray-900 bg-gray-900 text-white' 
+                        : 'border-gray-100 text-gray-400'
+                      }`}
+                    >
+                      {cond}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-      <p className="mt-4 text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest px-4">
-        Verified Safe Pickup & On-the-spot Payment.
-      </p>
-    </form>
+              <div className="grid grid-cols-4 gap-2">
+                <button 
+                  type="button"
+                  className="aspect-square rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center gap-1 text-gray-400 hover:border-orange-400 hover:text-orange-400 transition-all bg-gray-50"
+                  onClick={() => alert('Photo upload would go here')}
+                >
+                  <Camera className="h-6 w-6" />
+                  <span className="text-[10px] font-bold">Add Photo</span>
+                </button>
+                {/* Mocked Photo Placeholders */}
+                {[1,2,3].map(i => (
+                  <div key={i} className="aspect-square rounded-xl bg-gray-100 border border-gray-200" />
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={prevStep}
+                  className="flex-1 border-2 border-gray-100 text-gray-400 py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-50"
+                >
+                  <ChevronLeft className="h-5 w-5" /> Back
+                </button>
+                <button 
+                  type="button"
+                  onClick={nextStep}
+                  className="flex-[2] bg-gray-900 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 group transition-all"
+                >
+                  Next Step <ChevronRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {step === 3 && (
+            <motion.div
+              key="step3"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="space-y-1">
+                <h3 className="text-xl font-display font-bold text-gray-900">Pickup Details</h3>
+                <p className="text-sm text-gray-500">Where and when should we collect it?</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-orange-600" /> Address in Delhi NCR
+                  </label>
+                  <textarea 
+                    placeholder="Full address (House no, Street, Area, City)..."
+                    className="w-full p-4 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-600 outline-none h-24 text-sm"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    required
+                  />
+                  <div className="flex justify-end">
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        if (navigator.geolocation) {
+                          navigator.geolocation.getCurrentPosition((pos) => {
+                            setFormData({
+                              ...formData,
+                              address: `${formData.address} (GPS: ${pos.coords.latitude}, ${pos.coords.longitude})`.trim()
+                            });
+                          });
+                        }
+                      }}
+                      className="text-[10px] font-bold text-orange-600 flex items-center gap-1 hover:underline"
+                    >
+                      <MapPin className="h-3 w-3" /> Use Current Location
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 p-3 bg-yellow-50 rounded-lg border border-yellow-100">
+                    <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
+                    <p className="text-[10px] font-medium text-yellow-700">
+                      Service limited to Delhi, Ghaziabad, Noida, and Greater Noida.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-orange-600" /> Preferred Pickup Date
+                  </label>
+                  <input 
+                    type="date"
+                    className="w-full p-4 rounded-xl border border-gray-200 focus:ring-2 focus:ring-orange-600 outline-none"
+                    value={formData.pickupDate}
+                    onChange={(e) => setFormData({ ...formData, pickupDate: e.target.value })}
+                    required
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-lg border border-red-100">
+                  {error}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={prevStep}
+                  className="flex-1 border-2 border-gray-100 text-gray-400 py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-50"
+                >
+                  <ChevronLeft className="h-5 w-5" /> Back
+                </button>
+                <button 
+                  type="submit"
+                  disabled={isSubmitting || !formData.address || !formData.pickupDate}
+                  className="flex-[2] bg-orange-600 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-orange-700 disabled:opacity-50 shadow-lg shadow-orange-200 transition-all"
+                >
+                  {isSubmitting ? 'Submitting...' : user ? 'Submit Inquiry' : 'Login to Submit'}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </form>
+    </div>
   );
-};
+}

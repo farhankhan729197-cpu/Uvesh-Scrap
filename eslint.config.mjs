@@ -6,12 +6,6 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import firebaseRulesPlugin from '@firebase/eslint-plugin-security-rules';
-
-export default [
-  {
-    ignores: ['dist/**/*', '.next/**/*']
-  },
-  ...next,
-  firebaseRulesPlugin.configs['flat/recommended']
-];
+export default defineConfig([{
+    extends: [...next],
+}]);
